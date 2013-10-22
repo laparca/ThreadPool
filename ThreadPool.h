@@ -18,7 +18,13 @@ public:
     auto enqueue(F&& f, Args&&... args) 
         -> std::future<typename std::result_of<F(Args...)>::type>;
     ~ThreadPool();
+
+	void resize(size_t);
+
 private:
+	void add_worker();
+    void stop_worker();
+
     // need to keep track of threads so we can join them
     std::vector< std::thread > workers;
     // the task queue
@@ -35,23 +41,7 @@ inline ThreadPool::ThreadPool(size_t threads)
     :   stop(false)
 {
     for(size_t i = 0;i<threads;++i)
-        workers.emplace_back(
-            [this]
-            {
-                while(true)
-                {
-                    std::unique_lock<std::mutex> lock(this->queue_mutex);
-                    while(!this->stop && this->tasks.empty())
-                        this->condition.wait(lock);
-                    if(this->stop && this->tasks.empty())
-                        return;
-                    std::function<void()> task(this->tasks.front());
-                    this->tasks.pop();
-                    lock.unlock();
-                    task();
-                }
-            }
-        );
+		add_worker();
 }
 
 // add new work item to the pool
@@ -90,4 +80,50 @@ inline ThreadPool::~ThreadPool()
         workers[i].join();
 }
 
+inline void ThreadPool::resize(size_t size)
+{
+    int workers_size = workers.size();
+    if (size > workers_size)
+    {
+        for (int i = workers_size; i < size; ++i)
+            add_worker();
+    }
+    else if (size < workers_size && size > 0)
+    {
+        for (int i = size; i < workers_size; ++i)
+            stop_worker();
+    }
+}
+
+inline void ThreadPool::add_worker()
+{
+    workers.emplace_back(
+        [this]
+        {
+            while(true)
+            {
+                std::unique_lock<std::mutex> lock(this->queue_mutex);
+                while(!this->stop && this->tasks.empty())
+                    this->condition.wait(lock);
+                if(this->stop && this->tasks.empty())
+                    return;
+                std::function<void()> task(this->tasks.front());
+                this->tasks.pop();
+                lock.unlock();
+                task();
+            }
+        }
+    );
+}
+
+inline void ThreadPool::stop_worker()
+{
+    int last = workers.size() - 1;
+    /* stop worker last */
+    workers[last].join();
+    workers.pop_back();
+}
+
 #endif
+
+// vim: tabstop=4 shiftwidth=4 expandtab
